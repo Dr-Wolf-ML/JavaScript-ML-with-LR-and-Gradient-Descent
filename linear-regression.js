@@ -16,25 +16,48 @@ class LinearRegression {
     this.weights = tf.zeros([this.features.shape[1],1]);
   }
 
-  gradientDescent() {
-    const currentGuesses = this.features.matMul(this.weights);
-    const differences = currentGuesses.sub(this.labels);
-    const slopes = this.features  // slopes is sometimes called 'gradients'
+  gradientDescent(features, labels) {
+    const currentGuesses = features.matMul(this.weights);
+    const differences = currentGuesses.sub(labels);
+    const slopes = features  // slopes is sometimes called 'gradients'
       .transpose()
       .matMul(differences)
-      .div(this.features.shape[0])
+      .div(features.shape[0])
       // .mul(2) is require in the original equation, but doesn't add any real value here !!
 
     this.weights = this.weights.sub(slopes.mul(this.options.learningRate));
   }
 
   train() {
+    const batchQuantity = Math.floor(
+      this.features.shape[0] / this.options.batchSize
+      );
+
+    const {batchSize} = this.options;
+
+    const trainingSlice = (tensorSet, index) => {
+      return tensorSet.slice(
+        [index * batchSize, 0],
+        [batchSize, -1]
+      );
+    };
+
     for (let i = 0; i < this.options.iterations; i++) {
-      this.bHistory.push(this.weights.arraySync()[0][0]);
-      this.gradientDescent();
+      for (let j = 0; j < batchQuantity; j++) {
+        const featureSlice = trainingSlice(this.features, j);
+        const labelSlice = trainingSlice(this.labels, j);
+
+        this.bHistory.push(this.weights.arraySync()[0][0]);
+        this.gradientDescent(featureSlice, labelSlice);
+      }
+      
       this.recordMSE();
       this.updateLearningRate();
     }
+  }
+
+  predict(observations) {
+    return this.processFeatures(observations).matMul(this.weights);
   }
 
   test(testFeatures, testLabels) {
