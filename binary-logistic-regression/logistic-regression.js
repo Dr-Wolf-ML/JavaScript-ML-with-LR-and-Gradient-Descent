@@ -132,7 +132,7 @@ class LogisticRegression {
       .div(this.features.shape[0])
       .mul(-1)
       .arraySync();
-
+   
     this.costHistory.unshift(cost);
   }
 

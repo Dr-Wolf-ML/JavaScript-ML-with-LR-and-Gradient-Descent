@@ -1,5 +1,6 @@
 const tf = require('@tensorflow/tfjs');
 const plot = require('node-remote-plot');
+const _ = require('lodash');
 
 const loadCSV = require('../load-csv');
 const LogisticRegression = require('./logistic-regression');
@@ -17,21 +18,23 @@ const {features, labels, testFeatures, testLabels} = loadCSV('../data/cars.csv',
 });
 
 const regression = new LogisticRegression(features, labels, {
-  learningRate: 0.5,
+  learningRate: 1,
   iterations: 100,
-  batchSize: 50,
+  batchSize: 20,
   decisionBoundary: 0.5
 });
 
 regression.train();
 
+console.log('costHistory: ', regression.costHistory.map(image => _.flatMap(image)).reverse());
+
 plot({
   name: 'Cost_History_per_iteration',
   title: 'Cost History (Cross Entropy)',
-  x: regression.costHistory.reverse().flat(2),
+  x: regression.costHistory.map(image => _.flatMap(image)).reverse(),
   xLabel: 'Iterations #',
   yLabel: 'Cross Entropy'
 })
 
 // Classification Accuracy
-console.log(regression.test(testFeatures, testLabels));
+console.log('Classification Accuracy: ', regression.test(testFeatures, testLabels));

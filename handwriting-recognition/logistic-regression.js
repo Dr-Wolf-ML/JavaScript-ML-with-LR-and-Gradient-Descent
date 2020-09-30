@@ -1,3 +1,5 @@
+const { sigmoid, softmax } = require('@tensorflow/tfjs');
+// require('@tensorflow/tfjs-node');  // threw error in OSX.14.beta.6
 const tf = require('@tensorflow/tfjs');
 
 // LogisticRegression expects features to be [[], [], ...]
@@ -13,33 +15,31 @@ class LogisticRegression {
       learningRate: 0.1,
       iterations: 100,
       batchSize: 50,
-      calculationMode: 'marginal'  // or 'conditional' === sigmoid vs softmax
-    }, options)
+      classificationFunction: 'softmax'  // can be either 'softmax' or 'sigmoid'
+    }, options);
 
     this.weights = tf.zeros([this.features.shape[1], this.labels.shape[1]]);
   }
 
-  gradientDescent(features, labels) {
-    let currentGuesses;
+  applyClassificationFunction(tensor) {
+    return this.options.classificationFunction === 'softmax' ? tensor.softmax() : tensor.sigmoid();
+  }
 
-    if (this.options.calculationMode === 'marginal') {
-      currentGuesses = features
-        .matMul(this.weights)
-        .sigmoid();
-    } else if (this.options.calculationMode === 'conditional') {
-      currentGuesses = features
-        .matMul(this.weights)
-        .softmax();
-    }
+  gradientDescent(features, labels) {
+    let currentGuesses = features
+      .matMul(this.weights);
+    
+    currentGuesses = this.applyClassificationFunction(currentGuesses);
 
     const differences = currentGuesses.sub(labels);
+    
     const slopes = features  // slopes is sometimes called 'gradients'
       .transpose()
       .matMul(differences)
       .div(features.shape[0])
       // .mul(2) is required in the original equation, but doesn't add any real value here !!
 
-    this.weights = this.weights.sub(slopes.mul(this.options.learningRate));
+    return this.weights.sub(slopes.mul(this.options.learningRate));
   }
 
   train() {
@@ -47,52 +47,43 @@ class LogisticRegression {
       this.features.shape[0] / this.options.batchSize
       );
 
-    const {batchSize} = this.options;
-
-    const trainingSlice = (tensorSet, index) => {
-      return tensorSet.slice(
-        [index * batchSize, 0],
-        [batchSize, -1]
-      );
-    };
-
     for (let i = 0; i < this.options.iterations; i++) {
       for (let j = 0; j < batchQuantity; j++) {
-        const featureSlice = trainingSlice(this.features, j);
-        const labelSlice = trainingSlice(this.labels, j);
-
-        this.bHistory.push(this.weights.arraySync()[0][0]);
-        this.gradientDescent(featureSlice, labelSlice);
-      }
+        const startIndex = j * this.options.batchSize;
+        const {batchSize} = this.options;
       
+        this.weights = tf.tidy(() => {
+          const featureSlice = this.features.slice(
+            [startIndex, 0],
+            [batchSize, -1]
+          );
+          const labelSlice = this.labels.slice(
+            [startIndex, 0],
+            [batchSize, -1]
+          );
+
+          this.bHistory.push(this.weights.arraySync()[0][0]);
+          return this.gradientDescent(featureSlice, labelSlice);
+        });
+      }
+
       this.recordCost();
       this.updateLearningRate();
     }
   }
-
+  
   predict(observations) {
-    switch (this.options.calculationMode) {
-      case 'marginal':
-        return this.processFeatures(observations)
-          .matMul(this.weights)
-          .sigmoid()
-          .argMax(1);
+    const term = this.processFeatures(observations)
+      .matMul(this.weights)
 
-        case 'conditional':
-          return this.processFeatures(observations)
-          .matMul(this.weights)
-          .softmax()
-          .argMax(1);
-    
-      default:
-        break;
-    }
+    return this.applyClassificationFunction(term)
+        .argMax(1);
   }
 
   test(testFeatures, testLabels) {
     const predictions = this.predict(testFeatures);
     testLabels = tf.tensor(testLabels)
-      .argMax(1);;
+      .argMax(1);
 
     const incorrect = predictions
       .notEqual(testLabels)
@@ -119,49 +110,50 @@ class LogisticRegression {
   standardize(features) {
     const {mean, variance} = tf.moments(features, 0);
 
-    this.mean = mean;
-    this.variance = variance;
+    // debugging variance
+    const filler = variance.cast('bool').logicalNot().cast('float32');
 
-    return features.sub(mean).div(variance.pow(0.5));
+    this.mean = mean;
+    this.variance = variance.add(filler);
+
+    return features.sub(mean).div(this.variance.pow(0.5));
   }
 
   recordCost() {
-    let guesses;
+    const cost = tf.tidy(() => {
 
-    if (this.options.calculationMode === 'marginal') {
-      guesses = this.features
-        .matMul(this.weights)
-        .sigmoid();
-    } else if (this.options.calculationMode === 'conditional') {
-      guesses = this.features
-        .matMul(this.weights)
-        .softmax();
-    }
+      let guesses = this.features
+        .matMul(this.weights);
 
-    const termOne = this.labels
-      .transpose()
-      .matMul(
-        guesses
-          .log()
-        );
+      guesses = this.applyClassificationFunction(guesses);
 
-    const termTwo = this.labels
-      .mul(-1)
-      .add(1)
-      .transpose()
-      .matMul(
-        guesses
-          .mul(-1)
-          .add(1)
-          .log()
-        );
+      const termOne = this.labels
+        .transpose()
+        .matMul(
+          guesses
+            .add(1e-7)  // bug fix to prevent a log(0) to be taken in the next step
+            .log()
+          );
 
-    const cost = termOne
-      .add(termTwo)
-      .div(this.features.shape[0])
-      .mul(-1)
+      const termTwo = this.labels
+        .mul(-1)
+        .add(1)
+        .transpose()
+        .matMul(
+          guesses
+            .mul(-1)
+            .add(1)
+            .add(1e-7)  // bug fix to prevent a log(0) to be taken in the next step
+            .log()
+          );
+
+      return [termOne
+        .add(termTwo)
+        .div(this.features.shape[0])
+        .mul(-1)
         .bufferSync()
-        .values[0];
+        .values[0]];
+    });
 
     this.costHistory.unshift(cost);
   }
