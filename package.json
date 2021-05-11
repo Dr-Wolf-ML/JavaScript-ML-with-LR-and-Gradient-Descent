@@ -9,7 +9,7 @@
   "dependencies": {
     "@tensorflow/tfjs": "^2.3.0",
     "@tensorflow/tfjs-node": "^2.4.0",
-    "lodash": "^4.17.20",
+    "lodash": "^4.17.21",
     "memoize": "^0.1.1",
     "mnist-data": "^1.2.6",
     "node-remote-plot": "^1.2.0",
